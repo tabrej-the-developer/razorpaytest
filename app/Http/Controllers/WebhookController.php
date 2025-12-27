@@ -13,40 +13,48 @@ use App\Models\Subscription as SubscriptionModel;
 use Exception;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
+use Razorpay\Api\Utility;
 
 class WebhookController extends Controller
 {
 
 
-   public function handle(Request $request)
+ public function handle(Request $request)
 {
-    $payload = $request->getContent();
+    $payload   = $request->getContent(); // raw body
     $signature = $request->header('X-Razorpay-Signature');
+    $secret    = env('RAZORPAY_WEBHOOK_SECRET');
 
-    try {
-        $api = new Api(env('RAZORPAY_KEY_ID'), env('RAZORPAY_KEY_SECRET'));
-        $api->utility->verifyPaymentSignature([
-            'razorpay_payment_id' => $data['payload']['payment']['entity']['id'] ?? null,
-            'razorpay_order_id' => $data['payload']['order']['entity']['id'] ?? null,
-            'razorpay_signature' => $signature
+    // 1) Compute expected signature
+    $expected = hash_hmac('sha256', $payload, $secret);
+
+    // 2) Compare securely
+    if (! hash_equals($expected, $signature)) {
+        Log::error('Webhook signature failed', [
+            'expected' => $expected,
+            'got'      => $signature,
         ]);
-    } catch (SignatureVerificationError $e) {
+
         return response()->json(['error' => 'Invalid signature'], 400);
     }
 
-    $data = json_decode($payload, true);
-    $event = $data['event'];
+    // 3) Parse and handle events
+    $data  = json_decode($payload, true);
+    $event = $data['event'] ?? null;
 
     if ($event === 'subscription.activated') {
-        // activate course
+        Log::info('Subscription activated', $data);
+        // mark user subscription active
     }
 
     if ($event === 'invoice.paid') {
+        Log::info('Invoice paid', $data);
         // ₹4 auto-debit success
     }
 
     if ($event === 'invoice.payment_failed') {
-        // suspend / notify
+        Log::info('Invoice failed', $data);
+        // notify + maybe suspend access
     }
 
     return response()->json(['ok' => true]);

@@ -12,6 +12,10 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         //
+           $middleware->validateCsrfTokens(except: [
+            'razorpay/webhook',   // POST /razorpay/webhook
+            // 'razorpay/*',       // or wildcard if you need
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //
