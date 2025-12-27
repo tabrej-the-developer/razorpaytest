@@ -25,6 +25,14 @@ Route::post('/verify-6', [PaymentController::class, 'verifySixRupeePayment']);
 Route::post('/create-subscription', [PaymentController::class, 'createSubscription']);
 Route::post('/razorpay/webhook', [WebhookController::class, 'handle']);
 
+Route::get('/pay-6-page', function () {
+    return view('pay6');
+});
+
+Route::get('/enable-autopay', function () {
+    return view('autopay');
+});
+
 
 
 // Authentication Routes

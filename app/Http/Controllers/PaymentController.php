@@ -90,6 +90,6 @@ class PaymentController extends Controller
     // Checkout page
     public function checkout()
     {
-        return view('checkout');
+        return view('pay6');
     }
 }

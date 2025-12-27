@@ -18,22 +18,38 @@ class WebhookController extends Controller
 {
 
 
-    public function handle(Request $request)
-    {
-        $event = $request->event;
+   public function handle(Request $request)
+{
+    $payload = $request->getContent();
+    $signature = $request->header('X-Razorpay-Signature');
 
-        if ($event === 'subscription.activated') {
-            // enable course fully
-        }
-
-        if ($event === 'invoice.paid') {
-            // ₹4 auto-debit success
-        }
-
-        if ($event === 'invoice.payment_failed') {
-            // suspend features / notify
-        }
-
-        return response()->json(['ok' => true]);
+    try {
+        $api = new Api(env('RAZORPAY_KEY_ID'), env('RAZORPAY_KEY_SECRET'));
+        $api->utility->verifyPaymentSignature([
+            'razorpay_payment_id' => $data['payload']['payment']['entity']['id'] ?? null,
+            'razorpay_order_id' => $data['payload']['order']['entity']['id'] ?? null,
+            'razorpay_signature' => $signature
+        ]);
+    } catch (SignatureVerificationError $e) {
+        return response()->json(['error' => 'Invalid signature'], 400);
     }
+
+    $data = json_decode($payload, true);
+    $event = $data['event'];
+
+    if ($event === 'subscription.activated') {
+        // activate course
+    }
+
+    if ($event === 'invoice.paid') {
+        // ₹4 auto-debit success
+    }
+
+    if ($event === 'invoice.payment_failed') {
+        // suspend / notify
+    }
+
+    return response()->json(['ok' => true]);
+}
+
 }
