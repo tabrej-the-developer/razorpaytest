@@ -2,94 +2,138 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\UserSubscription;
 use Illuminate\Http\Request;
 use Razorpay\Api\Api;
-use Razorpay\Api\Errors\SignatureVerificationError;
-use Razorpay\Api\Payment;
-use Razorpay\Api\Order;
-use Razorpay\Api\Subscription;
-use App\Models\Order as OrderModel;
-use App\Models\Subscription as SubscriptionModel;
-use Exception;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Hash;
 
 class PaymentController extends Controller
 {
-    protected $api;
+    private $api;
 
     public function __construct()
     {
-        $this->api = new Api(
-            config('services.razorpay.key'),
-            config('services.razorpay.secret')
-        );
+        $this->api = new Api(env('RAZORPAY_KEY'), env('RAZORPAY_SECRET'));
     }
 
-    // ₹4 Subscription (UPI AutoPay)
-     public function createSubscription(Request $request)
-    {
-        $api = new Api(
-            config('services.razorpay.key'),
-            config('services.razorpay.secret')
-        );
+    // Step 1: Create Subscription (₹6 upfront + ₹4 mandate)
+   public function createSubscription(Request $request)
+{
+    Log::info('🔔 createSubscription API called');
 
-        $subscription = $api->subscription->create([
-            'plan_id' => 'plan_RvPX8a8DdPRmx9',
+    // 🔴 AUTH DEBUG
+    $user = Auth::user();
+
+    if (!$user) {
+        Log::error('❌ User not authenticated');
+        return response()->json([
+            'error' => 'Unauthenticated'
+        ], 401);
+    }
+
+    Log::info('👤 User authenticated', [
+        'user_id' => $user->id,
+        'email' => $user->email ?? null,
+    ]);
+
+    // 🔴 SUBSCRIPTION CHECK DEBUG
+    $alreadySubscribed = UserSubscription::where('user_id', $user->id)
+        ->where('status', 'active')
+        ->exists();
+
+    Log::info('📦 Active subscription exists?', [
+        'exists' => $alreadySubscribed
+    ]);
+
+    if ($alreadySubscribed) {
+        return response()->json([
+            'error' => 'Already subscribed'
+        ], 400);
+    }
+
+    try {
+        // 🔴 RAZORPAY PAYLOAD DEBUG
+        $payload = [
+            'plan_id' => env('RAZORPAY_PLAN_ID'),
+            'total_count' => 12, // REQUIRED
+            'quantity' => 1,
             'customer_notify' => 1,
-            'total_count' => 1,
             'notes' => [
-                'user_id' => Auth::user()->id
-            ]
+                'user_id' => $user->id,
+                'course' => 'HRMS Course'
+            ],
+        ];
+
+        Log::info('📤 Creating Razorpay subscription', $payload);
+
+        $subscription = $this->api->subscription->create($payload);
+
+        Log::info('✅ Razorpay subscription created', [
+            'subscription_id' => $subscription->id,
+            'status' => $subscription->status ?? null
         ]);
 
         return response()->json([
-            'subscription_id' => $subscription->id
-        ]);
-    }
+            'subscription_id' => $subscription->id,
+            'key' => env('RAZORPAY_KEY')
+        ], 200);
 
-
-    public function createSixRupeeOrder()
-    {
-        $api = new Api(
-            config('services.razorpay.key'),
-            config('services.razorpay.secret')
-        );
-
-        $order = $api->order->create([
-            'amount'   => 600,   // 6 rupees
-            'currency' => 'INR',
-            'receipt'  => uniqid()
+    } catch (\Razorpay\Api\Errors\Base $e) {
+        // 🔴 Razorpay specific error
+        Log::error('💥 Razorpay API error', [
+            'message' => $e->getMessage(),
+            'code' => $e->getCode(),
         ]);
 
-        return response()->json(['order_id' => $order->id]);
+        return response()->json([
+            'error' => 'Razorpay error',
+            'message' => $e->getMessage()
+        ], 500);
+
+    } catch (\Exception $e) {
+        // 🔴 General error
+        Log::error('💥 Subscription creation failed', [
+            'message' => $e->getMessage(),
+            'file' => $e->getFile(),
+            'line' => $e->getLine(),
+        ]);
+
+        return response()->json([
+            'error' => 'Failed to create subscription',
+            'message' => $e->getMessage()
+        ], 500);
     }
+}
 
-
-    public function verifySixRupeePayment(Request $request)
+    // Step 2: Verify Payment Success
+    public function verifyPayment(Request $request)
     {
-        $signature = hash_hmac(
-            'sha256',
-            $request->razorpay_order_id . '|' . $request->razorpay_payment_id,
-            config('services.razorpay.secret')
-        );
+        $input = $request->all();
+        $paymentId = $input['razorpay_payment_id'];
+        $subscriptionId = $input['razorpay_subscription_id'];
+        $signature = $input['razorpay_signature'];
 
-        if ($signature !== $request->razorpay_signature) {
-            return response()->json(['status' => 'failed'], 400);
+        try {
+            $generatedSignature = hash_hmac('sha256', $paymentId . '|' . $subscriptionId, env('RAZORPAY_SECRET'));
+            
+            if (hash_equals($generatedSignature, $signature)) {
+                // Save subscription to DB
+                UserSubscription::create([
+                    'user_id' => Auth::id(),
+                    'razorpay_subscription_id' => $subscriptionId,
+                    'razorpay_payment_id' => $paymentId,
+                    'status' => 'active',
+                    'razorpay_current_start' => now(),
+                ]);
+
+                return response()->json(['status' => 'success']);
+            }
+        } catch (\Exception $e) {
+            Log::error('Payment verification failed: ' . $e->getMessage());
         }
 
-        // SAVE: ₹6 paid
-        // mark: user ready for subscription
-
-        return response()->json(['status' => 'success']);
-    }
-
-
-
-
-    // Checkout page
-    public function checkout()
-    {
-        return view('pay6');
+        return response()->json(['status' => 'failed'], 400);
     }
 }

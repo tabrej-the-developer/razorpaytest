@@ -11,27 +11,38 @@ use App\Http\Controllers\AuthController;
 // });
 
 
+Route::get('/', function () {
+    return view('subscribe');
+});
 
-Route::get('/', [PaymentController::class, 'checkout']);
+Route::middleware('auth')->group(function () {
+    Route::post('/create-subscription', [PaymentController::class, 'createSubscription'])->name('create.subscription');
+    Route::post('/verify-payment', [PaymentController::class, 'verifyPayment'])->name('verify.payment');
+});
 
-Route::get('/create-order', [PaymentController::class, 'createOrder']);
-// Route::post('/create-subscription', [PaymentController::class, 'createSubscription'])
-//     ->middleware('auth');
-
-
-    Route::post('/pay-6', [PaymentController::class, 'createSixRupeeOrder']);
-Route::post('/verify-6', [PaymentController::class, 'verifySixRupeePayment']);
-
-Route::post('/create-subscription', [PaymentController::class, 'createSubscription']);
+// Webhook (no auth/CSRF)
 Route::post('/razorpay/webhook', [WebhookController::class, 'handle']);
 
-Route::get('/pay-6-page', function () {
-    return view('pay6');
-});
+// Route::get('/', [PaymentController::class, 'checkout']);
 
-Route::get('/enable-autopay', function () {
-    return view('autopay');
-});
+// Route::get('/create-order', [PaymentController::class, 'createOrder']);
+// // Route::post('/create-subscription', [PaymentController::class, 'createSubscription'])
+// //     ->middleware('auth');
+
+
+//     Route::post('/pay-6', [PaymentController::class, 'createSixRupeeOrder']);
+// Route::post('/verify-6', [PaymentController::class, 'verifySixRupeePayment']);
+
+// Route::post('/create-subscription', [PaymentController::class, 'createSubscription']);
+// Route::post('/razorpay/webhook', [WebhookController::class, 'handle']);
+
+// Route::get('/pay-6-page', function () {
+//     return view('pay6');
+// });
+
+// Route::get('/enable-autopay', function () {
+//     return view('autopay');
+// });
 
 
 

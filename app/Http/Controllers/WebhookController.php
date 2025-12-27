@@ -3,61 +3,67 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
-use Razorpay\Api\Api;
-use Razorpay\Api\Errors\SignatureVerificationError;
-use Razorpay\Api\Payment;
-use Razorpay\Api\Order;
-use Razorpay\Api\Subscription;
-use App\Models\Order as OrderModel;
-use App\Models\Subscription as SubscriptionModel;
-use Exception;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Auth;
-use Razorpay\Api\Utility;
+use App\Models\UserSubscription;
 
 class WebhookController extends Controller
 {
+    public function handle(Request $request)
+    {
+        $payload = $request->getContent();
+        $signature = $request->header('X-Razorpay-Signature');
+        $secret = env('RAZORPAY_WEBHOOK_SECRET');
 
+        // Verify webhook signature [conversation_history:38][conversation_history:39]
+        $expected = hash_hmac('sha256', $payload, $secret);
+        if (!hash_equals($expected, $signature)) {
+            Log::error('Webhook signature failed');
+            return response()->json(['error' => 'Invalid signature'], 400);
+        }
 
- public function handle(Request $request)
-{
-    $payload   = $request->getContent(); // raw body
-    $signature = $request->header('X-Razorpay-Signature');
-    $secret    = env('RAZORPAY_WEBHOOK_SECRET');
+        $data = json_decode($payload, true);
+        $event = $data['event'] ?? null;
 
-    // 1) Compute expected signature
-    $expected = hash_hmac('sha256', $payload, $secret);
+        Log::info('Webhook received', ['event' => $event]);
 
-    // 2) Compare securely
-    if (! hash_equals($expected, $signature)) {
-        Log::error('Webhook signature failed', [
-            'expected' => $expected,
-            'got'      => $signature,
-        ]);
+        match($event) {
+            'subscription.activated' => $this->handleActivated($data),
+            'invoice.paid' => $this->handleInvoicePaid($data),
+            'subscription.charged' => $this->handleCharged($data),
+            'invoice.payment_failed' => $this->handlePaymentFailed($data),
+            default => Log::info('Unhandled event: ' . $event)
+        };
 
-        return response()->json(['error' => 'Invalid signature'], 400);
+        return response()->json(['ok' => true], 200);
     }
 
-    // 3) Parse and handle events
-    $data  = json_decode($payload, true);
-    $event = $data['event'] ?? null;
-
-    if ($event === 'subscription.activated') {
-        Log::info('Subscription activated', $data);
-        // mark user subscription active
+    private function handleActivated($data)
+    {
+        $subscriptionId = $data['payload']['subscription']['entity']['id'];
+        UserSubscription::where('razorpay_subscription_id', $subscriptionId)
+            ->update(['status' => 'active']);
     }
 
-    if ($event === 'invoice.paid') {
-        Log::info('Invoice paid', $data);
-        // ₹4 auto-debit success
+    private function handleInvoicePaid($data)
+    {
+        $subscriptionId = $data['payload']['subscription']['entity']['id'];
+        UserSubscription::where('razorpay_subscription_id', $subscriptionId)
+            ->update(['status' => 'active']);
+        // Extend course access here
     }
 
-    if ($event === 'invoice.payment_failed') {
-        Log::info('Invoice failed', $data);
-        // notify + maybe suspend access
+    private function handleCharged($data)
+    {
+        $subscriptionId = $data['payload']['subscription']['entity']['id'];
+        UserSubscription::where('razorpay_subscription_id', $subscriptionId)
+            ->update(['status' => 'active']);
     }
 
-    return response()->json(['ok' => true]);
-}
-
+    private function handlePaymentFailed($data)
+    {
+        $subscriptionId = $data['payload']['subscription']['entity']['id'];
+        UserSubscription::where('razorpay_subscription_id', $subscriptionId)
+            ->update(['status' => 'payment_failed']);
+        // Send notification to user
+    }
 }
